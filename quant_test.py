@@ -22,6 +22,8 @@ parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
 parser.add_argument('--resume', '-r', action='store_true',
                     help='resume from checkpoint')
 parser.add_argument('--device_name', '-d', default=9 ,type=int, help='cuda device number')
+parser.add_argument('--w', type=int, default=4, help="w_bits")
+parser.add_argument('--a', type=int, default=4, help="a_bits")
 args = parser.parse_args()
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -66,16 +68,17 @@ cfg = checkpoint['cfg']
 best_acc = checkpoint['acc']
 start_epoch = checkpoint['epoch']
 print("loaded pruned model with accuracy {}\n cfg: {}".format( best_acc, cfg))
-net = ResNet18(cfg=cfg)
-net.load_state_dict(checkpoint['state_dict'])
+net = QResNet18(args.w, args.a , cfg=cfg)
+net.load_state_dict(checkpoint['state_dict'], strict=False)
 
+print("w_bits {}, a_bits {}".format(net.w_bits, net.a_bits))
 
-
-#print(net)
+print(net)
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.SGD(net.parameters(), lr=args.lr,
                       momentum=0.9, weight_decay=5e-4)
-# Training
+best_acc = 0
+
 def train(epoch):
     print('\nEpoch: %d' % epoch)
     net.train()

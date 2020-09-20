@@ -13,21 +13,21 @@ from qnn import func as qf
 def quantized_activation(a_bits):
     return nn.Sequential(nn.ReLU(), qf.LogQuant(a_bits, unsigned=True))
 
-class BasicBlock(nn.Module):
+class QBasicBlock(nn.Module):
     expansion = 1
 
     def __init__(self, in_planes, planes, w_bits, a_bits,stride=1, cfg = None):
-        super(BasicBlock, self).__init__()
-        self.relu = quantized_activation(a_bits)
+        super(QBasicBlock, self).__init__()
+        self.a_bits = a_bits
         if not cfg:
             self.conv1 = QConv2d(planes, planes, 3, qf.QTanh(w_bits), stride=stride, padding=1, bias=False)
             self.bn1 = nn.BatchNorm2d(planes)
-            self.conv2 = QConv2d(planes, planes, 3, qf.QTanh(w_bits),stride=stride, padding=1, bias=False)
+            self.conv2 = QConv2d(planes, planes, 3, qf.QTanh(w_bits),stride=1, padding=1, bias=False)
             self.bn2 = nn.BatchNorm2d(planes)
         else:
             self.conv1 = QConv2d(in_planes, cfg, 3, qf.QTanh(w_bits), stride=stride, padding=1, bias=False)
             self.bn1 = nn.BatchNorm2d(cfg)
-            self.conv2 = QConv2d(in_planes, cfg, 3, qf.QTanh(w_bits), stride=stride, padding=1, bias=False)
+            self.conv2 = QConv2d(cfg, planes, 3, qf.QTanh(w_bits), stride=1, padding=1, bias=False)
             self.bn2 = nn.BatchNorm2d(planes)
         self.shortcut = nn.Sequential()
         if stride != 1 or in_planes != self.expansion*planes:
@@ -38,10 +38,10 @@ class BasicBlock(nn.Module):
             )
 
     def forward(self, x):
-        out = self.relu(self.bn1(self.conv1(x)))
+        out = quantized_activation(self.a_bits)(self.bn1(self.conv1(x)))
         out = self.bn2(self.conv2(out))
         out += self.shortcut(x)
-        out = self.relu(out)
+        out = quantized_activation(self.a_bits)(out)
         return out
 
 # change to quant
@@ -76,14 +76,14 @@ class Bottleneck(nn.Module):
         return out
 
 
-class ResNet(nn.Module):
+class QResNet(nn.Module):
     def __init__(self, block, num_blocks,w_bits,a_bits, num_classes=10, cfg = None):
-        super(ResNet, self).__init__()
+        super(QResNet, self).__init__()
         self.in_planes = 64
         self.a_bits = a_bits
         self.w_bits = w_bits
         self.cfg = cfg
-        self.relu = quantized_activation(a_bits)
+
         self.conv1 = QConv2d(3, 64, 3, qf.QTanh(w_bits),stride=1, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(64)
         if self.cfg:
@@ -117,7 +117,7 @@ class ResNet(nn.Module):
             return nn.Sequential(*layers)
 
     def forward(self, x):
-        out = self.relu(self.bn1(self.conv1(x)))
+        out = quantized_activation(self.a_bits)(self.bn1(self.conv1(x)))
         out = self.layer1(out)
         out = self.layer2(out)
         out = self.layer3(out)
@@ -128,28 +128,28 @@ class ResNet(nn.Module):
         return out
 
 
-def ResNet18(w_bits, a_bits, cfg=None):
-    return ResNet(BasicBlock, [2, 2, 2, 2], w_bits, a_bits ,cfg=cfg)
+def QResNet18(w_bits, a_bits, cfg=None):
+    return QResNet(QBasicBlock, [2, 2, 2, 2], w_bits, a_bits ,cfg=cfg)
 
 
-def ResNet34(w_bits, a_bits,cfg = None):
-    return ResNet(BasicBlock, [3, 4, 6, 3], w_bits, a_bits ,cfg=cfg)
+def QResNet34(w_bits, a_bits,cfg = None):
+    return QResNet(QBasicBlock, [3, 4, 6, 3], w_bits, a_bits ,cfg=cfg)
 
 
-def ResNet50(w_bits, a_bits,cfg = None):
-    return ResNet(Bottleneck, [3, 4, 6, 3], w_bits, a_bits ,cfg=cfg)
+def QResNet50(w_bits, a_bits,cfg = None):
+    return QResNet(Bottleneck, [3, 4, 6, 3], w_bits, a_bits ,cfg=cfg)
 
 
-def ResNet101(w_bits, a_bits,cfg = None):
-    return ResNet(Bottleneck, [3, 4, 23, 3],w_bits, a_bits ,cfg=cfg)
+def QResNet101(w_bits, a_bits,cfg = None):
+    return QResNet(Bottleneck, [3, 4, 23, 3],w_bits, a_bits ,cfg=cfg)
 
 
-def ResNet152(w_bits, a_bits,cfg = None):
-    return ResNet(Bottleneck, [3, 8, 36, 3],w_bits, a_bits ,cfg=cfg)
+def QResNet152(w_bits, a_bits,cfg = None):
+    return QResNet(Bottleneck, [3, 8, 36, 3],w_bits, a_bits ,cfg=cfg)
 
 
 def test():
-    net = ResNet18()
+    net = QResNet18()
     y = net(torch.randn(1, 3, 32, 32))
     print(y.size())
 
