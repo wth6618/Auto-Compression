@@ -63,12 +63,12 @@ testloader = torch.utils.data.DataLoader(
 print('Prepare data done!')
 
 
-checkpoint = torch.load('./pruned_model/resNet18.pth', map_location='cuda:0')
+checkpoint = torch.load('./pruned_model/p_mobilenet.pth', map_location='cuda:0')
 cfg = checkpoint['cfg']
 best_acc = checkpoint['acc']
 start_epoch = checkpoint['epoch']
 print("loaded pruned model with accuracy {}\n cfg: {}".format( best_acc, cfg))
-net = QResNet18(args.w, args.a , cfg=cfg)
+net = QMobileNet(args.w, args.a, p_cfg=cfg)
 net.load_state_dict(checkpoint['state_dict'], strict=False)
 
 print("w_bits {}, a_bits {}".format(net.w_bits, net.a_bits))
@@ -136,7 +136,7 @@ def test(epoch, acc_list):
         }
         if not os.path.isdir('experiment_results/p_q'):
             os.mkdir('experiment_results/p_q')
-        torch.save(state, './experiment_results/p_q/resNet18_p_q.pth')
+        torch.save(state, './experiment_results/p_q/mobilenet_p_q.pth')
         best_acc = acc
     return (acc, epoch)
 
@@ -153,7 +153,7 @@ for epoch in range(start_epoch, end_epoch):
     best,e = test(epoch, acc_list)
 acc_list = np.array(acc_list)
 print(acc_list)
-pd.DataFrame(acc_list).to_csv("experiment_results/p_q/resnet18_acc.csv")
+pd.DataFrame(acc_list).to_csv("experiment_results/p_q/mobilenet_acc.csv")
 print('Saving..')
 state = {
     'state_dict': net.state_dict(),

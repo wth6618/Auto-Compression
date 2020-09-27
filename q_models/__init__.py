@@ -10,7 +10,7 @@ from .shufflenetv2 import *
 from .qresnet import *
 from .resnext import *
 from .preact_resnet import *
-from .mobilenet import *
+from .qmobilenet import *
 from .mobilenetv2 import *
 from .efficientnet import *
 from .regnet import *
