@@ -59,10 +59,10 @@ testloader = torch.utils.data.DataLoader(
 
 print('Prepare data done!')
 
-net = ResNet18()
-#net = MobileNet()
-checkpoint = torch.load('./baselines/resNet18.pth', map_location='cuda:0')
-#checkpoint = torch.load('./baselines/mobileNet.pth', map_location='cuda:0')
+#net = ResNet18()
+net = MobileNet()
+#checkpoint = torch.load('./baselines/resNet18.pth', map_location='cuda:0')
+checkpoint = torch.load('./baselines/mobileNet.pth', map_location='cuda:0')
 
 net.load_state_dict(checkpoint['state_dict'])
 best_acc = checkpoint['acc']
@@ -75,30 +75,14 @@ optimizer = optim.SGD(net.parameters(), lr=args.lr,
 net = net.to(device)
 
 # pruner = structured_L1(net, pruning_rate=[0.1,0.2,0.5], skip=[0,7,12,17], depth=18)
-pruner = structured_L1(net, pruning_rate=0.6, skip=[7,12,17])
+pruner = structured_L1(net, pruning_rate=0.6)
 #pruner = Unstructured(net, pruning_rate=0.8, global_wise=True)
 pruner.step()
 print(pruner.cfg)
-#new_model = MobileNet(p_cfg=pruner.cfg)
-#new_model = ResNet18(cfg=pruner.cfg)
 
-#new_model = pruner.zero_params(new_model).to(device)
 pruner.zero_params()
-#print(new_model)
-print("______________old model_____________")
-print(net)
 
-# pruner.zero_params()
-#
-#
-layerid = 0
-# for m in new_model.modules():
-#     if isinstance(m, nn.Conv2d):
-#         #print("conv2d #{}".format(layerid))
-#         print("conv2d #{}, in_channel = {}, out_channel = {}".format(layerid, m.in_channels, m.out_channels))
-#         print("weight shape:")
-#         print(m.weight.shape)
-#         layerid +=1
+
 
 
 
@@ -159,21 +143,16 @@ def test(epoch, net):
         torch.save(state, './pruned_model/mobileNet.pth')
         best_acc = acc
     return (acc, epoch)
-# acc, epoch = test(281, new_model.to(device))
+
 net.to(device)
 train(1,net)
 acc , epoch = test(1,net)
 print('Saving..')
-# state = {
-#     'state_dict': net.state_dict(),
-#     'acc': acc,
-#     'epoch': epoch,
-#     'cfg':pruner.cfg
-# }
+
 if not os.path.isdir('pruned_model'):
     os.mkdir('pruned_model')
 torch.save(net, './pruned_model/try.pth')
-print("reloading the model")
+
 model = torch.load('./pruned_model/try.pth')
-print("retesting the model")
+
 test(1,model)
