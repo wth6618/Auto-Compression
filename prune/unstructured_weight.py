@@ -3,41 +3,18 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-def cut(pruning_rate, flat_params):
-    """ Compute cutoff value within `flat_params` at percentage `pruning_rate`."""
-    assert flat_params.dim() == 1
-    # Compute cutoff value
-    with torch.no_grad():
-        cutoff_index = round(pruning_rate * flat_params.size()[0])
-        values, __indices = torch.sort(torch.abs(flat_params))
-        cutoff = values[cutoff_index]
-    return cutoff
-
-
-class VectorPruning():
+class Unstructured():
     """ Magnitude pruning with an optimizer-like interface  """
 
-    def __init__(self, model, pruning_rate=0.80, layer_wise=False, global_wise=False, target_layers=None):
+    def __init__(self, model, pruning_rate=0.25, layer_wise=False, global_wise=False, target_layers=None):
         """ Init pruning method """
         self.layer_wise = layer_wise
         self.global_wise = global_wise
         self.target_layers = target_layers
         self.pruning_rate = float(pruning_rate)
-
-        # if exclude_biases:
-        #     # Discover all non-bias parameters
-        #     self.params = [p for p in params if p.dim() > 1]
-        # else:
-        #     self.params = [p for p in params]
         self.model = model
-
         self.masks = []
-        # # init masks to all ones
-        # masks = []
-        # for p in self.params:
-        #     masks.append(torch.ones_like(p))
-        #
-        # self.masks = masks
+
 
     ################################################
     # Reporting nonzero entries and number of params
@@ -69,40 +46,38 @@ class VectorPruning():
     def step(self):
         """ Update the pruning masks """
         if self.global_wise:
-            total, num_rows = 0, 0
-
+            total, nonzero = 0 , 0
             for m in self.model.modules():
                 if isinstance(m, nn.Conv2d):
                     total += m.weight.data.numel()
-                    num_rows +=  m.out_channels * m.kernel_size[0] * m.in_channels
-
-            conv_weights = torch.zeros(num_rows)
+                    temp = m.weight.data.abs().clone().gt(0).float().cuda()
+                    nonzero += torch.sum(temp)
+            conv_weights = torch.zeros(total)
             index = 0
             for m in self.model.modules():
                 if isinstance(m, nn.Conv2d):
-                    row = m.out_channels * m.kernel_size[0] * m.in_channels
-                    row_sum = m.weight.data.abs().clone().sum((3), keepdim = True)
-                    conv_weights[index:(index + row)] = row_sum.flatten()
-                    index += row
+                    size = m.weight.data.numel()
+                    conv_weights[index:(index + size)] = m.weight.data.view(-1).abs().clone()
+                    index += size
 
             y, i = torch.sort(conv_weights)
-            thre_index = int(num_rows * self.pruning_rate)
+            thre_index = int(total - nonzero + nonzero * self.pruning_rate)
             thre = y[thre_index]
             pruned = 0
             print('Pruning threshold: {}'.format(thre))
+            zero_flag = False
             for k, m in enumerate(self.model.modules()):
                 if isinstance(m, nn.Conv2d):
                     weight_copy = m.weight.data.abs().clone()
-                    mask = weight_copy.sum((3), keepdim = True).gt(thre).float().cuda()
+                    mask = weight_copy.gt(thre).float().cuda()
                     pruned = pruned + mask.numel() - torch.sum(mask)
                     self.masks.append(mask)
 
-                    if int(torch.sum(mask)) == 0:
-                        zero_flag = True
-                    print('layer index: {:d} \t total rows: {:d} \t remaining rows: {:d}'.
+
+                    print('layer index: {:d} \t total params: {:d} \t remaining params: {:d}'.
                           format(k, mask.numel(), int(torch.sum(mask))))
             print(
-                'Total conv params rows: {}, Pruned conv params rows: {}, Pruned ratio: {}'.format(num_rows, pruned, pruned / num_rows))
+                'Total conv params: {}, Pruned conv params: {}, Pruned ratio: {}'.format(total, pruned, pruned / total))
 
         if self.layer_wise:
 
@@ -117,23 +92,25 @@ class VectorPruning():
             for k, m in enumerate(self.model.modules()):
                 if k == layer_id:
                     if isinstance(m, nn.Conv2d):
-                        #size = m.weight.data.numel()
-                        size = m.out_channels * m.kernel_size[0] * m.in_channels
-                        #conv_weights = torch.zeros(size)
-                        row_sum = m.weight.data.abs().clone().sum((3), keepdim = True)
-                        y, _ = torch.sort(row_sum.flatten())
-                        thre_index = int(size * pruning_ratio)
+                        size = m.weight.data.numel()
+                        total += size
+                        temp = m.weight.data.abs().clone().gt(0).float().cuda()
+                        nonzero = torch.sum(temp)
+                        conv_weights = torch.zeros(size)
+                        conv_weights = m.weight.data.view(-1).abs().clone()
+                        y, _ = torch.sort(conv_weights)
+                        thre_index = int(size - nonzero + nonzero * pruning_ratio)
                         thre = y[thre_index]
 
                         print('Pruning threshold: {}'.format(thre))
                         weight_copy = m.weight.data.abs().clone()
-                        mask = weight_copy.sum((3), keepdim = True).gt(thre).float().cuda()
+                        mask = weight_copy.gt(thre).float().cuda()
                         pruned = pruned + mask.numel() - torch.sum(mask)
                         self.masks.append(mask)
 
                         if int(torch.sum(mask)) == 0:
                             zero_flag = True
-                        print('layer index: {:d} \t total params rows: {:d} \t remaining params rows: {:d}'.
+                        print('layer index: {:d} \t total params: {:d} \t remaining params: {:d}'.
                               format(k, mask.numel(), int(torch.sum(mask))))
                     else:
                         print("layer {} is not Conv2d \n {}".format(k, m))
@@ -142,42 +119,20 @@ class VectorPruning():
                         break
                     layer_id, pruning_ratio = self.target_layers[index]
 
-            # print(
-            #     'Total conv params in layer {} : {}, Pruned conv params: {}, Pruned ratio: {}'.format(layer_id,size, pruned, pruned / size))
-            # for i, (m, p) in enumerate(zip(self.masks, self.model.modules())):
-            #     # Compute cutoff
-            #     if isinstance()
-            #     flat_params = p[m == 1].view(-1)
-            #     cutoff = cut(self.pruning_rate, flat_params)
-            #     # Update mask
-            #     new_mask = torch.where(torch.abs(p) < cutoff,
-            #                            torch.zeros_like(p), m)
-            #     self.masks[i] = new_mask
-        # else:  # Global pruning #
-        #
-        #     # Gather all masked parameters
-        #     flat_params = torch.cat([p[m == 1].view(-1)
-        #                              for m, p in zip(self.masks, self.params)])
-        #     # Compute cutoff value
-        #     cutoff = cut(self.pruning_rate, flat_params)
-        #
-        #     # Calculate updated masks
-        #     for i, (m, p) in enumerate(zip(self.masks, self.params)):
-        #         new_mask = torch.where(torch.abs(p) < cutoff,
-        #                                torch.zeros_like(p), m)
-        #         self.masks[i] = new_mask
+            print(
+                'Total conv params: {}, Pruned conv params: {}, Pruned ratio: {}'.format(total, pruned, pruned / total))
+
 
     def zero_params(self, masks=None):
         """ Apply the masks, ie, zero out the params """
         masks = masks if masks is not None else self.masks
-        # for m, p in zip(masks, self.params):
-        #     p.data = m * p.data
+
         layer = 0
         if self.layer_wise:
             layer_id, _ = self.target_layers.pop(0)
             for k, m in enumerate(self.model.modules()):
                 if isinstance(m, nn.Conv2d) and k == layer_id:
-                    # print('layer {}, mask: {}'.format(m, masks[layer]))
+
                     m.weight.data.mul_(masks[layer])
                     layer += 1
 
@@ -188,75 +143,80 @@ class VectorPruning():
         if self.global_wise:
             for k, m in enumerate(self.model.modules()):
                 if isinstance(m, nn.Conv2d):
-                    # print('layer {}, mask: {}'.format(m, masks[layer]))
+
                     m.weight.data.mul_(masks[layer])
                     layer += 1
 
+
+
     ##############
 # Global
-# TEST RESULTS
+# TEST RESULTS PRUNE ONCE
 # {'Accuracy': 93.86}
 # --------------------------------------------------------------------------------
-# Testing: 100%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 40/40 [00:09<00:00,  4.44it/s]
-# Pruning threshold: 0.0012141085462644696
-# layer index: 3   total rows: 576         remaining rows: 576
-# layer index: 9   total rows: 4096        remaining rows: 3598
-# layer index: 11          total rows: 12288       remaining rows: 12265
-# layer index: 13          total rows: 16384       remaining rows: 12860
-# layer index: 17          total rows: 16384       remaining rows: 13237
-# layer index: 20          total rows: 16384       remaining rows: 12371
-# layer index: 22          total rows: 12288       remaining rows: 12198
-# layer index: 24          total rows: 16384       remaining rows: 10331
-# layer index: 28          total rows: 16384       remaining rows: 12880
-# layer index: 30          total rows: 12288       remaining rows: 12188
-# layer index: 32          total rows: 16384       remaining rows: 10639
-# layer index: 37          total rows: 32768       remaining rows: 26667
-# layer index: 39          total rows: 49152       remaining rows: 48795
-# layer index: 41          total rows: 65536       remaining rows: 48603
-# layer index: 45          total rows: 131072      remaining rows: 91050
-# layer index: 48          total rows: 65536       remaining rows: 42425
-# layer index: 50          total rows: 49152       remaining rows: 48782
-# layer index: 52          total rows: 65536       remaining rows: 46820
-# layer index: 56          total rows: 65536       remaining rows: 48432
-# layer index: 58          total rows: 49152       remaining rows: 48940
-# layer index: 60          total rows: 65536       remaining rows: 44493
-# layer index: 64          total rows: 65536       remaining rows: 49834
-# layer index: 66          total rows: 49152       remaining rows: 48810
-# layer index: 68          total rows: 65536       remaining rows: 36811
-# layer index: 73          total rows: 131072      remaining rows: 95091
-# layer index: 75          total rows: 196608      remaining rows: 189267
-# layer index: 77          total rows: 262144      remaining rows: 127329
-# layer index: 81          total rows: 524288      remaining rows: 149720
-# layer index: 84          total rows: 262144      remaining rows: 85206
-# layer index: 86          total rows: 196608      remaining rows: 171527
-# layer index: 88          total rows: 262144      remaining rows: 63152
-# layer index: 92          total rows: 262144      remaining rows: 82893
-# layer index: 94          total rows: 196608      remaining rows: 156858
-# layer index: 96          total rows: 262144      remaining rows: 36483
-# layer index: 100         total rows: 262144      remaining rows: 57918
-# layer index: 102         total rows: 196608      remaining rows: 93581
-# layer index: 104         total rows: 262144      remaining rows: 20069
-# layer index: 108         total rows: 262144      remaining rows: 57856
-# layer index: 110         total rows: 196608      remaining rows: 86566
-# layer index: 112         total rows: 262144      remaining rows: 24160
-# layer index: 116         total rows: 262144      remaining rows: 57484
-# layer index: 118         total rows: 196608      remaining rows: 101588
-# layer index: 120         total rows: 262144      remaining rows: 43009
-# layer index: 125         total rows: 524288      remaining rows: 39559
-# layer index: 127         total rows: 786432      remaining rows: 175930
-# layer index: 129         total rows: 1048576     remaining rows: 99056
-# layer index: 133         total rows: 2097152     remaining rows: 87328
-# layer index: 136         total rows: 1048576     remaining rows: 6890
-# layer index: 138         total rows: 786432      remaining rows: 94053
-# layer index: 140         total rows: 1048576     remaining rows: 77117
-# layer index: 144         total rows: 1048576     remaining rows: 3810
-# layer index: 146         total rows: 786432      remaining rows: 86779
-# layer index: 148         total rows: 1048576     remaining rows: 66365
-# Total conv params rows: 15901248, Pruned conv params rows: 12720999.0, Pruned ratio: 0.8000000715255737
-# Testing: 100%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 40/40 [00:07<00:00, 12.02it/s]-
+# Testing: 100%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 40/40 [00:08<00:00,  4.48it/s]
+# Pruning threshold: 0.0008240019669756293
+# layer index: 3   total params: 1728      remaining params: 1675
+# layer index: 9   total params: 4096      remaining params: 3736
+# layer index: 11          total params: 36864     remaining params: 31902
+# layer index: 13          total params: 16384     remaining params: 13738
+# layer index: 17          total params: 16384     remaining params: 14223
+# layer index: 20          total params: 16384     remaining params: 13597
+# layer index: 22          total params: 36864     remaining params: 30428
+# layer index: 24          total params: 16384     remaining params: 11594
+# layer index: 28          total params: 16384     remaining params: 13974
+# layer index: 30          total params: 36864     remaining params: 30379
+# layer index: 32          total params: 16384     remaining params: 12035
+# layer index: 37          total params: 32768     remaining params: 28680
+# layer index: 39          total params: 147456    remaining params: 118012
+# layer index: 41          total params: 65536     remaining params: 53735
+# layer index: 45          total params: 131072    remaining params: 103469
+# layer index: 48          total params: 65536     remaining params: 49440
+# layer index: 50          total params: 147456    remaining params: 115739
+# layer index: 52          total params: 65536     remaining params: 52188
+# layer index: 56          total params: 65536     remaining params: 53794
+# layer index: 58          total params: 147456    remaining params: 120012
+# layer index: 60          total params: 65536     remaining params: 50511
+# layer index: 64          total params: 65536     remaining params: 54813
+# layer index: 66          total params: 147456    remaining params: 117831
+# layer index: 68          total params: 65536     remaining params: 44379
+# layer index: 73          total params: 131072    remaining params: 106380
+# layer index: 75          total params: 589824    remaining params: 388396
+# layer index: 77          total params: 262144    remaining params: 163937
+# layer index: 81          total params: 524288    remaining params: 228868
+# layer index: 84          total params: 262144    remaining params: 126663
+# layer index: 86          total params: 589824    remaining params: 303636
+# layer index: 88          total params: 262144    remaining params: 90407
+# layer index: 92          total params: 262144    remaining params: 124155
+# layer index: 94          total params: 589824    remaining params: 256731
+# layer index: 96          total params: 262144    remaining params: 54637
+# layer index: 100         total params: 262144    remaining params: 95075
+# layer index: 102         total params: 589824    remaining params: 130660
+# layer index: 104         total params: 262144    remaining params: 31608
+# layer index: 108         total params: 262144    remaining params: 92847
+# layer index: 110         total params: 589824    remaining params: 115964
+# layer index: 112         total params: 262144    remaining params: 37704
+# layer index: 116         total params: 262144    remaining params: 90616
+# layer index: 118         total params: 589824    remaining params: 141961
+# layer index: 120         total params: 262144    remaining params: 63762
+# layer index: 125         total params: 524288    remaining params: 78192
+# layer index: 127         total params: 2359296   remaining params: 112271
+# layer index: 129         total params: 1048576   remaining params: 148802
+# layer index: 133         total params: 2097152   remaining params: 181095
+# layer index: 136         total params: 1048576   remaining params: 23417
+# layer index: 138         total params: 2359296   remaining params: 75918
+# layer index: 140         total params: 1048576   remaining params: 108701
+# layer index: 144         total params: 1048576   remaining params: 13483
+# layer index: 146         total params: 2359296   remaining params: 71984
+# layer index: 148         total params: 1048576   remaining params: 91692
+# Total conv params: 23447232, Pruned conv params: 18757786.0, Pruned ratio: 0.800000011920929
+# Testing:  98%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████▎    | 39/40 [00:07<00:00, 11.50it/s]-
 # -------------------------------------------------------------------------------
 # TEST RESULTS
-# {'Accuracy': 93.23}
+# {'Accuracy': 93.41}
+# --------------------------------------------------------------------------------
+# Testing: 100%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 40/40 [00:07<00:00,  5.26it/s]
+#
 
 
 # Local
@@ -264,21 +224,22 @@ class VectorPruning():
 # TEST RESULTS
 # {'Accuracy': 93.86}
 # --------------------------------------------------------------------------------
-# Testing: 100%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 40/40 [00:09<00:00,  4.39it/s]
+# Testing: 100%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 40/40 [00:08<00:00,  4.49it/s]
 # layer wise pruning
 # [(120, 0.9), (125, 0.9), (138, 0.9), (140, 0.95)]
 # Pruning threshold: 0.0017784038791432977
-# layer index: 120         total params rows: 262144       remaining params rows: 26214
+# layer index: 120         total params: 262144    remaining params: 26214
 # Pruning threshold: 0.0010467255488038063
-# layer index: 125         total params rows: 524288       remaining params rows: 52428
-# Pruning threshold: 0.0013513454468920827
-# layer index: 138         total params rows: 786432       remaining params rows: 78643
+# layer index: 125         total params: 524288    remaining params: 52428
+# Pruning threshold: 0.00045475305523723364
+# layer index: 138         total params: 2359296   remaining params: 235929
 # Pruning threshold: 0.0017091594636440277
-# layer index: 140         total params rows: 1048576      remaining params rows: 52428
-# Testing: 100%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 40/40 [00:07<00:00, 11.99it/s]-
+# layer index: 140         total params: 1048576   remaining params: 52428
+# Total conv params: 4194304, Pruned conv params: 3827305.0, Pruned ratio: 0.9125006198883057
+# Testing:  98%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████▎    | 39/40 [00:07<00:00, 11.64it/s]-
 # -------------------------------------------------------------------------------
 # TEST RESULTS
 # {'Accuracy': 93.86}
 # --------------------------------------------------------------------------------
-# Testing: 100%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 40/40 [00:07<00:00,  5.25it/s]
-#
+# Testing: 100%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 40/40 [00:07<00:00,  5.38it/s]
+
