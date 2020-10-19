@@ -77,19 +77,18 @@ print('==> Building model..')
 # net = RegNetX_200MF()
 
 
-checkpoint = torch.load('./pruned_model/p_mobilenet.pth', map_location='cuda:0')
-cfg = checkpoint['cfg']
-best_acc = checkpoint['acc']
-start_epoch = checkpoint['epoch']
-print("loaded pruned model with accuracy {}\n cfg: {}".format( best_acc, cfg))
-net = MobileNet(p_cfg=cfg)
-net.load_state_dict(checkpoint['state_dict'], strict=False)
+# checkpoint = torch.load('./pruned_model/p_mobilenet.pth', map_location='cuda:0')
+# cfg = checkpoint['cfg']
+# best_acc = checkpoint['acc']
+# start_epoch = checkpoint['epoch']
+# print("loaded pruned model with accuracy {}\n cfg: {}".format( best_acc, cfg))
+net = MobileNet()
+# net.load_state_dict(checkpoint['state_dict'], strict=False)
 if device == 'cuda':
     net = torch.nn.DataParallel(net)
     cudnn.benchmark = True
 net = net.to(device)
-print(net)
-exit()
+
 
 if args.resume:
     # Load checkpoint.
