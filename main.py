@@ -61,6 +61,7 @@ print('Prepare data done!')
 
 #net = ResNet18()
 net = MobileNet()
+
 #checkpoint = torch.load('./baselines/resNet18.pth', map_location='cuda:0')
 checkpoint = torch.load('./baselines/mobileNet.pth', map_location='cuda:0')
 
@@ -78,7 +79,7 @@ net = net.to(device)
 pruner = structured_L1(net, pruning_rate=0.6)
 #pruner = Unstructured(net, pruning_rate=0.8, global_wise=True)
 pruner.step()
-print(pruner.cfg)
+
 
 pruner.zero_params()
 

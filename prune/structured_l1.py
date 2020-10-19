@@ -7,12 +7,16 @@ import models
 
 
 def ifcontain(name, keywords):
-    print(name)
+
     for keyword in keywords:
         if keyword in name.split("."):
-            print(name)
+
             return True
     return False
+
+def getBlockID(name):
+
+    return name.split(".")[1]
 
 class structured_L1:
 
@@ -27,7 +31,7 @@ class structured_L1:
         self.cfg = []
         self.cfg_mask = []
         self.masks = []
-        self.skip = skip
+
 
 
     ################################################
@@ -66,26 +70,78 @@ class structured_L1:
         self.prune_out = []
         self.prune_in = []
         self.prune_both = []
+        self.skip = []
+        key = ["shortcut"]
         convList = []
-        print("show names")
+        
 
+        convList = []
         for name, m in self.model.named_modules():
-            print(name)
-
-        for m in self.model.modules():
-
             if isinstance(m, nn.Conv2d):
-                convList.append(m)
+                convList.append((name,m))
+        #print(self.model)
+        for index in range(len(convList)):
 
-        print("step!!!!!")
-        print(convList)
+            name, layer = convList[index]
+
+            outchannel = layer.out_channels
+            inchannel = layer.in_channels
+            #print("index:{}, name: {}, layer: {}, inchannel :{}, outchannel: {} ".format(index, name, layer, outchannel, inchannel))
+
+            if ifcontain(name, key) or index == 0:
+                self.skip.append(index)
+                continue
+
+            if index+1 >= len(convList) :
+                if inchannel == convList[index - 1][1].out_channels:
+                    self.prune_in.append(index)
+                    continue
+                else:
+                    self.skip.append(index)
+                    continue
+            if outchannel != convList[index+1][1].in_channels and inchannel == convList[index-1][1].out_channels:
+                self.prune_in.append(index)
+                continue
+
+            if outchannel == convList[index+1][1].in_channels and inchannel != convList[index-1][1].out_channels:
+                self.prune_out.append(index)
+                continue
+
+            if outchannel == convList[index+1][1].in_channels and inchannel == convList[index-1][1].out_channels:
+                if index-1 in self.prune_in or index-1 in self.skip:
+                    if ifcontain(convList[index+1][0], key) or getBlockID(name) != getBlockID(convList[index+1][0]):
+                        self.skip.append(index)
+                        continue
+                    self.prune_out.append(index)
+                    continue
+
+                if getBlockID(name) != getBlockID(convList[index+1][0]):
+
+                    self.prune_in.append(index)
+                    continue
+
+                self.prune_both.append(index)
+                continue
+            self.skip.append(index)
+
+        print("prune_skip : {}".format(self.skip))
+        print("prune_out : {}".format(self.prune_out))
+        print("prune_in : {}".format(self.prune_in))
+        print("prune_both : {}".format(self.prune_both))
+
+
+
+
+
+
+
 
 
         self.cfg = []
         self.cfg_mask = []
 
         for index in range(len(convList)):
-            m = convList[index]
+            _, m = convList[index]
             in_channels = m.weight.data.shape[1]
             out_channels = m.weight.data.shape[0]
 
@@ -93,31 +149,11 @@ class structured_L1:
                 self.cfg.append(out_channels)
                 continue
 
-
-            if index == 0 and  out_channels == convList[index+1].weight.data.shape[1]:
-                if index+1 not in self.skip:
-                    self.prune_out.append(index)
-                    weight_copy = m.weight.data.abs().clone().cpu().numpy()
-                    L1_norm = np.sum(weight_copy, axis=(1, 2, 3))
-                    num_keep = int(out_channels * (1 - self.pruning_rate))
-                    arg_max = np.argsort(L1_norm)
-                    arg_max_rev = arg_max[::-1][:num_keep]
-                    mask = torch.zeros(out_channels)
-                    mask[arg_max_rev.tolist()] = 1
-                    self.cfg_mask.append(mask)
-                    self.cfg.append(num_keep)
-                else:
-                    print("next conv need to skip,this convID: {} next convID : {} name :{}".format(index, index+1, convList[index+1][0]))
-                    self.cfg.append(out_channels)
-                continue
-
-            if index+1 == len(convList) and in_channels == convList[index-1].weight.data.shape[0]:
-                self.prune_in.append(index)
+            if index in self.prune_in:
                 self.cfg.append(out_channels)
                 continue
 
-            if out_channels == convList[index+1].weight.data.shape[1]:
-
+            if index in self.prune_out:
                 weight_copy = m.weight.data.abs().clone().cpu().numpy()
                 L1_norm = np.sum(weight_copy, axis=(1, 2, 3))
                 num_keep = int(out_channels * (1 - self.pruning_rate))
@@ -127,31 +163,24 @@ class structured_L1:
                 mask[arg_max_rev.tolist()] = 1
                 self.cfg_mask.append(mask)
                 self.cfg.append(num_keep)
-                if index-1 in self.skip or in_channels != convList[index-1].weight.data.shape[0]:
-                    self.prune_out.append(index)
-                else:
-                    self.prune_both.append(index)
 
-                continue
+            if index in self.prune_both:
+                weight_copy = m.weight.data.abs().clone().cpu().numpy()
+                L1_norm = np.sum(weight_copy, axis=(1, 2, 3))
+                num_keep = int(out_channels * (1 - self.pruning_rate))
+                arg_max = np.argsort(L1_norm)
+                arg_max_rev = arg_max[::-1][:num_keep]
+                mask = torch.zeros(out_channels)
+                mask[arg_max_rev.tolist()] = 1
+                self.cfg_mask.append(mask)
+                self.cfg.append(num_keep)
 
 
-            if out_channels != convList[index+1].weight.data.shape[1] and in_channels == convList[index-1].weight.data.shape[0]:
-
-                self.prune_in.append(index)
-                self.cfg.append(out_channels)
-                continue
-
-            self.cfg.append(out_channels)
-        print("prune_out : {}".format(self.prune_out))
-        print("prune_in : {}".format(self.prune_in))
-        print("prune_both : {}".format(self.prune_both))
-        print(len(self.cfg_mask))
 
     def zero_params(self,masks=None):
         """ Apply the masks, ie, zero out the params """
         masks = masks if masks is not None else self.cfg_mask
 
-        print('zeroing')
         layer_id_in_cfg = 0
         # mask_out = torch.ones(3)
         # mask_int = torch.ones(3)
@@ -163,11 +192,9 @@ class structured_L1:
             m0 = module_list[index]
 
             if isinstance(m0, nn.Conv2d):
-                # print("conv2d #{}, in_channel = {}, out_channel = {}".format(conv_count, m0.in_channels, m0.out_channels))
-                # print("weight shape:")
-                # print(m0.weight.shape)
+
                 if conv_count in self.prune_out:
-                    print("prune_out conv2d ID : {}".format(conv_count))
+
                     out_channel = self.cfg[conv_count]
                     mask_out = masks[layer_id_in_cfg]
                     idx_out = np.squeeze(np.argwhere(np.asarray(mask_out.cpu().numpy())))
@@ -190,12 +217,12 @@ class structured_L1:
                         index += 1
 
                     layer_id_in_cfg += 1
-                    print("layer_id :{}".format(layer_id_in_cfg))
+
                     conv_count += 1
                     continue
 
                 if conv_count in self.prune_both:
-                    print("prune_both conv2d ID : {}".format(conv_count))
+
                     out_channel = self.cfg[conv_count]
                     in_channel = self.cfg[conv_count-1]
                     mask_out = masks[layer_id_in_cfg]
@@ -222,13 +249,13 @@ class structured_L1:
                         m0.running_mean = m0.running_mean[idx_out.tolist()].clone()
                         m0.running_var = m0.running_var[idx_out.tolist()].clone()
                     layer_id_in_cfg += 1
-                    print("layer_id :{}".format(layer_id_in_cfg))
+                    #print("layer_id :{}".format(layer_id_in_cfg))
                     conv_count += 1
 
                     continue
 
                 if conv_count in self.prune_in:
-                    print("prune_in conv2d ID : {}".format(conv_count))
+                    #print("prune_in conv2d ID : {}".format(conv_count))
                     in_channel = self.cfg[conv_count - 1]
                     mask = masks[layer_id_in_cfg - 1]
                     idx = np.squeeze(np.argwhere(np.asarray(mask.cpu().numpy())))
