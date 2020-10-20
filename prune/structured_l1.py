@@ -146,11 +146,12 @@ class structured_L1:
             out_channels = m.weight.data.shape[0]
 
             if index in self.skip:
-                self.cfg.append(out_channels)
+                self.cfg.append((in_channels,out_channels))
                 continue
 
             if index in self.prune_in:
-                self.cfg.append(out_channels)
+                new_inchannel = self.cfg[-1][1]
+                self.cfg.append((new_inchannel,out_channels))
                 continue
 
             if index in self.prune_out:
@@ -162,7 +163,7 @@ class structured_L1:
                 mask = torch.zeros(out_channels)
                 mask[arg_max_rev.tolist()] = 1
                 self.cfg_mask.append(mask)
-                self.cfg.append(num_keep)
+                self.cfg.append((in_channels, num_keep))
 
             if index in self.prune_both:
                 weight_copy = m.weight.data.abs().clone().cpu().numpy()
@@ -173,7 +174,7 @@ class structured_L1:
                 mask = torch.zeros(out_channels)
                 mask[arg_max_rev.tolist()] = 1
                 self.cfg_mask.append(mask)
-                self.cfg.append(num_keep)
+                self.cfg.append((in_channels,num_keep))
 
 
 
@@ -195,7 +196,7 @@ class structured_L1:
 
                 if conv_count in self.prune_out:
 
-                    out_channel = self.cfg[conv_count]
+                    _, out_channel = self.cfg[conv_count]
                     mask_out = masks[layer_id_in_cfg]
                     idx_out = np.squeeze(np.argwhere(np.asarray(mask_out.cpu().numpy())))
                     if idx_out.size == 1:
@@ -223,8 +224,8 @@ class structured_L1:
 
                 if conv_count in self.prune_both:
 
-                    out_channel = self.cfg[conv_count]
-                    in_channel = self.cfg[conv_count-1]
+                    in_channel, out_channel = self.cfg[conv_count]
+
                     mask_out = masks[layer_id_in_cfg]
                     mask_in = masks[layer_id_in_cfg - 1]
                     idx_out = np.squeeze(np.argwhere(np.asarray(mask_out.cpu().numpy())))
@@ -256,7 +257,7 @@ class structured_L1:
 
                 if conv_count in self.prune_in:
                     #print("prune_in conv2d ID : {}".format(conv_count))
-                    in_channel = self.cfg[conv_count - 1]
+                    in_channel, _ = self.cfg[conv_count ]
                     mask = masks[layer_id_in_cfg - 1]
                     idx = np.squeeze(np.argwhere(np.asarray(mask.cpu().numpy())))
                     if idx.size == 1:

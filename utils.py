@@ -14,6 +14,29 @@ import torch.nn.init as init
 from models import *
 
 
+def ApplyCFG(model, cfg):
+    index = 0
+    for m in model.modules():
+        if isinstance(m, nn.Conv2d):
+            in_channel, out_channel = cfg[index]
+            m.in_channels = in_channel
+            m.out_channels = out_channel
+            #print(m.weight.data.shape)
+            data = torch.zeros([out_channel, in_channel, m.weight.data.shape[2],m.weight.data.shape[3]])
+            m.weight = nn.Parameter(data)
+            index += 1
+        if isinstance(m, nn.BatchNorm2d):
+
+            _ , num = cfg[index-1]
+            m.num_features = num
+            data = torch.zeros(num)
+            m.weight.data = nn.Parameter(data)
+
+            m.bias.data = nn.Parameter(data)
+            m.running_mean = m.running_mean.data[:num].clone()
+            m.running_var = m.running_var.data[:num].clone()
+    return model
+
 def load_data():
     transform_train = transforms.Compose([
         transforms.RandomCrop(32, padding=4),

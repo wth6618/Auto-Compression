@@ -59,11 +59,11 @@ testloader = torch.utils.data.DataLoader(
 
 print('Prepare data done!')
 
-#net = ResNet18()
-net = MobileNet()
+net = ResNet18()
+#net = MobileNet()
 
-#checkpoint = torch.load('./baselines/resNet18.pth', map_location='cuda:0')
-checkpoint = torch.load('./baselines/mobileNet.pth', map_location='cuda:0')
+checkpoint = torch.load('./baselines/resNet18.pth', map_location='cuda:0')
+#checkpoint = torch.load('./baselines/mobileNet.pth', map_location='cuda:0')
 
 net.load_state_dict(checkpoint['state_dict'])
 best_acc = checkpoint['acc']
@@ -146,14 +146,30 @@ def test(epoch, net):
     return (acc, epoch)
 
 net.to(device)
-train(1,net)
+#train(1,net)
 acc , epoch = test(1,net)
 print('Saving..')
-
+state = {
+    'state_dict': net.state_dict(),
+    'acc': acc,
+    'epoch': epoch,
+    'cfg': pruner.cfg
+}
 if not os.path.isdir('pruned_model'):
     os.mkdir('pruned_model')
-torch.save(net, './pruned_model/try.pth')
+torch.save(state, './pruned_model/try.pth')
 
-model = torch.load('./pruned_model/try.pth')
+checkpoint = torch.load('./pruned_model/try.pth')
+
+cfg = checkpoint["cfg"]
+print(cfg)
+
+#model = MobileNet()
+model = ResNet18()
+
+# use ApplyCFG to load pruned model
+model = ApplyCFG(model, cfg).to(device)
+
+model.load_state_dict(checkpoint["state_dict"])
 
 test(1,model)

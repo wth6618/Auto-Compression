@@ -12,11 +12,13 @@ import os
 import argparse
 
 from models import *
-from utils import progress_bar
+from utils import *
 
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
+parser.add_argument('--path', default='./baselines/resNet18.pth', type=str,  metavar='PATH',help='path to model')
+parser.add_argument('--pruned', default=False, type=bool,help='model is pruned or not')
 parser.add_argument('--resume', '-r', action='store_true',
                     help='resume from checkpoint')
 parser.add_argument('--device_name', '-d', default=9 ,type=int, help='cuda device number')
@@ -62,7 +64,7 @@ classes = ('plane', 'car', 'bird', 'cat', 'deer',
 # Model
 print('==> Building model..')
 # net = VGG('VGG19')
-# net = ResNet18()
+net = ResNet18()
 # net = PreActResNet18()
 # net = GoogLeNet()
 # net = DenseNet121()
@@ -77,16 +79,32 @@ print('==> Building model..')
 # net = RegNetX_200MF()
 
 
-# checkpoint = torch.load('./pruned_model/p_mobilenet.pth', map_location='cuda:0')
-# cfg = checkpoint['cfg']
-# best_acc = checkpoint['acc']
-# start_epoch = checkpoint['epoch']
-# print("loaded pruned model with accuracy {}\n cfg: {}".format( best_acc, cfg))
-net = MobileNet()
-# net.load_state_dict(checkpoint['state_dict'], strict=False)
-if device == 'cuda':
-    net = torch.nn.DataParallel(net)
-    cudnn.benchmark = True
+
+
+
+
+# if device == 'cuda':
+#     net = torch.nn.DataParallel(net)
+#     cudnn.benchmark = True
+#
+
+
+checkpoint = torch.load(args.path, map_location='cuda:0')
+best_acc = checkpoint['acc']
+start_epoch = checkpoint['epoch']
+#checkpoint = torch.load('./baselines/mobileNet.pth', map_location='cuda:0')
+
+if args.pruned:
+    cfg = checkpoint['cfg']
+    net = ApplyCFG(net, cfg)
+
+net.load_state_dict(checkpoint['state_dict'])
+
+print("loaded model with accuracy {}".format( best_acc))
+
+criterion = nn.CrossEntropyLoss()
+optimizer = optim.SGD(net.parameters(), lr=args.lr,
+                      momentum=0.9, weight_decay=5e-4)
 net = net.to(device)
 
 

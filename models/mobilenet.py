@@ -45,7 +45,7 @@ class MobileNet(nn.Module):
     def _make_layers(self, in_planes):
         layers = []
         if self.p_cfg:
-            idx = 0
+            idx = 1
             for x in self.cfg:
                 out_planes = x if isinstance(x, int) else x[0]
                 stride = 1 if isinstance(x, int) else x[1]
