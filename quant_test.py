@@ -63,12 +63,15 @@ testloader = torch.utils.data.DataLoader(
 print('Prepare data done!')
 
 
-checkpoint = torch.load('./pruned_model/p_mobilenet.pth', map_location='cuda:0')
+checkpoint = torch.load('./pruned_model/try.pth', map_location='cuda:0')
 cfg = checkpoint['cfg']
 best_acc = checkpoint['acc']
 start_epoch = checkpoint['epoch']
 print("loaded pruned model with accuracy {}\n cfg: {}".format( best_acc, cfg))
-net = QMobileNet(args.w, args.a, p_cfg=cfg)
+net = QResNet18(args.w, args.a)
+
+net = ApplyCFG(net, cfg).to(device)
+
 net.load_state_dict(checkpoint['state_dict'], strict=False)
 
 print("w_bits {}, a_bits {}".format(net.w_bits, net.a_bits))
