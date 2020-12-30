@@ -12,95 +12,78 @@ import os
 import argparse
 
 from models import *
+from q_models import *
 from utils import *
 
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
+parser.add_argument('--ct', '--cifar-type', default='10', type=int, metavar='CT', help='10 for cifar10,100 for cifar100 (default: 10)')
+parser.add_argument('--method', default='l1norm', type=str,  metavar='method',help='pruning method')
+parser.add_argument('--path', default='./baselines/resNet20.pth', type=str,  metavar='PATH',help='path to model')
+parser.add_argument('--save', default='./checkpoint/resNet20.pth', type=str,  metavar='PATH',help='save path to model')
+
+parser.add_argument('--epoch', '-e', default=150 ,type=int, help='epoch')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
-parser.add_argument('--path', default='./baselines/resNet18.pth', type=str,  metavar='PATH',help='path to model')
-parser.add_argument('--pruned', default=False, type=bool,help='model is pruned or not')
 parser.add_argument('--resume', '-r', action='store_true',
                     help='resume from checkpoint')
+parser.add_argument('--batch_size', '-b', default=128 ,type=int, help='batch size')
 parser.add_argument('--device_name', '-d', default=9 ,type=int, help='cuda device number')
+parser.add_argument('--pruned', '-p', action='store_true', help='if input model pruned')
+parser.add_argument('--quant', '-q', action='store_true', help='if input model quant')
+parser.add_argument('--dataparallel', '-dp', default=False ,type=bool, help='saved using nn.parallel')
+parser.add_argument('--w', type=int, default=8, help="w_bits")
+parser.add_argument('--a', type=int, default=8, help="a_bits")
 args = parser.parse_args()
 
+
+
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-best_acc = 0  # best test accuracy
+
 start_epoch = 0  # start from epoch 0 or last checkpoint epoch
 
-if device == 'cude':
-    torch.cuda.set_device(args.device_name)
 
 # Data
 print('==> Preparing data..')
 
-
-
-transform_train = transforms.Compose([
-    transforms.RandomCrop(32, padding=4),
-    transforms.RandomHorizontalFlip(),
-    transforms.ToTensor(),
-    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-])
-
-transform_test = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-])
-
-trainset = torchvision.datasets.CIFAR10(
-    root='./data', train=True, download=True, transform=transform_train)
-trainloader = torch.utils.data.DataLoader(
-    trainset, batch_size=128, shuffle=True)
-
-testset = torchvision.datasets.CIFAR10(
-    root='./data', train=False, download=True, transform=transform_test)
-testloader = torch.utils.data.DataLoader(
-    testset, batch_size=100, shuffle=False)
-
-classes = ('plane', 'car', 'bird', 'cat', 'deer',
-           'dog', 'frog', 'horse', 'ship', 'truck')
+trainloader, testloader = load_data(args.ct, args.batch_size)
 
 # Model
 print('==> Building model..')
-# net = VGG('VGG19')
-net = ResNet18()
-# net = PreActResNet18()
-# net = GoogLeNet()
-# net = DenseNet121()
-# net = ResNeXt29_2x64d()
-# net = MobileNet()
-# net = MobileNetV2()
-# net = DPN92()
-# net = ShuffleNetG2()
-# net = SENet18()
-# net = ShuffleNetV2(1)
-# net = EfficientNetB0()
-# net = RegNetX_200MF()
+
+if args.quant:
+    net = qresnet20_cifar(w_bits = args.w, a_bits = args.a, num_classes = args.ct)
+else:
+    net = resnet20_cifar(num_classes = args.ct)
+# net = qresnet20_cifar(w_bits = args.w, a_bits = args.a, num_classes = 100)
+# net = resnet20_cifar()
 
 
 
+cfg = []
+mask = []
 
 
-
-# if device == 'cuda':
-#     net = torch.nn.DataParallel(net)
-#     cudnn.benchmark = True
-#
-
-
-checkpoint = torch.load(args.path, map_location='cuda:0')
-best_acc = checkpoint['acc']
-start_epoch = checkpoint['epoch']
-#checkpoint = torch.load('./baselines/mobileNet.pth', map_location='cuda:0')
+checkpoint = torch.load(args.path)
 
 if args.pruned:
     cfg = checkpoint['cfg']
-    net = ApplyCFG(net, cfg)
+    mask = checkpoint['mask']
+    net = ApplyCFG(net, cfg).to(device)
+    print("loaded pruned model with cfg: {}".format( cfg))
 
-net.load_state_dict(checkpoint['state_dict'])
+if args.dataparallel:
+    print("parallel")
+    checkpoint = loadParalData(checkpoint)
+net.load_state_dict(checkpoint['state_dict'], strict = False)
 
-print("loaded model with accuracy {}".format( best_acc))
+print("loaded model with acc {}".format(checkpoint['acc']))
+
+exit(0)
+
+best_acc = checkpoint['acc']
+start_epoch = checkpoint['epoch']  # start from epoch 0 or last checkpoint epoch
+
+
 
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.SGD(net.parameters(), lr=args.lr,
@@ -108,85 +91,34 @@ optimizer = optim.SGD(net.parameters(), lr=args.lr,
 net = net.to(device)
 
 
-if args.resume:
-    # Load checkpoint.
-    print('==> Resuming from checkpoint..')
-    assert os.path.isdir('baselines'), 'Error: no checkpoint directory found!'
-    checkpoint = torch.load('./baselines/ckpt.pth')
-    net.load_state_dict(checkpoint['state_dict'])
-    best_acc = checkpoint['acc']
-    start_epoch = checkpoint['epoch']
-    print("resume training with epoch {}, accuracy {}, lr {}".format(start_epoch, best_acc, args.lr))
-
-criterion = nn.CrossEntropyLoss()
-optimizer = optim.SGD(net.parameters(), lr=args.lr,
-                      momentum=0.9, weight_decay=5e-4)
 
 
-# Training
-def train(epoch):
-    print('\nEpoch: %d' % epoch)
-    net.train()
-    train_loss = 0
-    correct = 0
-    total = 0
-    for batch_idx, (inputs, targets) in enumerate(trainloader):
-        inputs, targets = inputs.to(device), targets.to(device)
-        optimizer.zero_grad()
-        outputs = net(inputs)
-        loss = criterion(outputs, targets)
-        loss.backward()
-        optimizer.step()
+ep = args.epoch
+end_epoch = start_epoch+ep
+# net = nn.DataParallel(net).to(device)
+net = net.to(device)
+for epoch in range(start_epoch, end_epoch):
+    if epoch in [start_epoch + ep * 0.15, start_epoch + ep * 0.3, start_epoch + ep * 0.5, start_epoch + ep * 0.75, start_epoch + ep * 0.9]:
+        print('lr decrease')
+        for param_group in optimizer.param_groups:
+            param_group['lr'] *= 0.1
 
-        train_loss += loss.item()
-        _, predicted = outputs.max(1)
-        total += targets.size(0)
-        correct += predicted.eq(targets).sum().item()
+    train(trainloader, net, criterion, optimizer, epoch, device)
+    acc = validate(testloader, net, criterion,device)
 
-        progress_bar(batch_idx, len(trainloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
-                     % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
-
-
-def test(epoch):
-    global best_acc
-    net.eval()
-    test_loss = 0
-    correct = 0
-    total = 0
-    with torch.no_grad():
-        for batch_idx, (inputs, targets) in enumerate(testloader):
-            inputs, targets = inputs.to(device), targets.to(device)
-            outputs = net(inputs)
-            loss = criterion(outputs, targets)
-
-            test_loss += loss.item()
-            _, predicted = outputs.max(1)
-            total += targets.size(0)
-            correct += predicted.eq(targets).sum().item()
-
-            progress_bar(batch_idx, len(testloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
-                         % (test_loss/(batch_idx+1), 100.*correct/total, correct, total))
-
-    # Save checkpoint.
-    acc = 100.*correct/total
     if acc > best_acc:
-        print('Saving..')
+
         state = {
             'state_dict': net.state_dict(),
             'acc': acc,
             'epoch': epoch,
+            'cfg': cfg,
+            'mask': mask
         }
-        if not os.path.isdir('checkpoint'):
-            os.mkdir('checkpoint')
-        torch.save(state, './checkpoint/ckpt.pth')
+        print("Saving to {}".format(args.save))
+
+        torch.save(state, args.save)
         best_acc = acc
 
 
-end_epoch = start_epoch+300
 
-for epoch in range(start_epoch, end_epoch):
-    if epoch in [end_epoch * 0.5, end_epoch * 0.75, epoch * 0.9]:
-        for param_group in optimizer.param_groups:
-            param_group['lr'] *= 0.1
-    train(epoch)
-    test(epoch)

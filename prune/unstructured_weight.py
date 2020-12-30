@@ -6,7 +6,7 @@ import torch.nn.functional as F
 class Unstructured():
     """ Magnitude pruning with an optimizer-like interface  """
 
-    def __init__(self, model, pruning_rate=0.25, layer_wise=False, global_wise=False, target_layers=None):
+    def __init__(self, model, pruning_rate=0.25, layer_wise=False, global_wise=True, target_layers=None):
         """ Init pruning method """
         self.layer_wise = layer_wise
         self.global_wise = global_wise
