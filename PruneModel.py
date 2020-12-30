@@ -55,7 +55,7 @@ print('==> Building model..')
 
 # print(net)
 
-
+mask, cfg = [], []
 if args.quant:
     net = qresnet20_cifar(w_bits=args.w, a_bits=args.a, num_classes=args.ct)
 else:
@@ -94,24 +94,24 @@ else:
 
 pruner.step()
 pruner.zero_params()
+if args.method == 'slim' or args.method == 'l1norm':
+    keys = sorted(pruner.prune_out + pruner.prune_both + pruner.prune_in)
 
-keys = sorted(pruner.prune_out + pruner.prune_both + pruner.prune_in)
+    assert len(keys) == len(pruner.cfg_mask), 'something wrong'
 
-assert len(keys) == len(pruner.cfg_mask), 'something wrong'
+    p_total, remain = 0, 0
+    total = pruner.total
+    mask = collections.defaultdict(set)
+    for idx in range(len(keys)):
+        mask[keys[idx]] = pruner.cfg_mask[idx]
+        remain += int(torch.sum(pruner.cfg_mask[idx]))
+        p_total += int(pruner.cfg_mask[idx].nelement())
 
-p_total, remain = 0, 0
-total = pruner.total
-mask = collections.defaultdict(set)
-for idx in range(len(keys)):
-    mask[keys[idx]] = pruner.cfg_mask[idx]
-    remain += int(torch.sum(pruner.cfg_mask[idx]))
-    p_total += int(pruner.cfg_mask[idx].nelement())
-
-print("total {}, pruned {}, acutal prune ratio:{:.2f}".format(total, p_total - remain, 1 - (remain / p_total)))
+    print("total {}, pruned {}, acutal prune ratio:{:.2f}".format(total, p_total - remain, 1 - (remain / p_total)))
+    cfg = pruner.cfg
 
 filename = args.save
-print(filename)
-print(pruner.cfg)
+
 # print(net)
 
 # net = nn.DataParallel(net).to(device)
@@ -123,7 +123,7 @@ state = {
     'state_dict': net.state_dict(),
     'acc': acc,
     'epoch': 0,
-    'cfg': pruner.cfg,
+    'cfg': cfg,
     'mask': mask
 }
 print("Saving to {}".format(args.save))
